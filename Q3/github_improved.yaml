@@ -1,0 +1,166 @@
+name: Doorman CD
+
+run-name: Deploy Doorman to ${{ github.event.inputs.environment }} by @${{ github.actor }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        type: choice
+        required: true
+        description: Which environment to deploy?
+        options:
+          - dev
+          - staging
+          - preprod
+          - live
+      namespace:
+        description: Namespace override (defaults to 'stack')
+        required: false
+        default: stack
+      commit_hash:
+        description: Commit Hash
+        required: false
+
+env:
+  APP_NAME: doorman
+
+jobs:
+  git_ref:
+    runs-on: arc-runner-set
+    outputs:
+      full: ${{ steps.ref.outputs.full }}
+      short: ${{ steps.ref.outputs.short }}
+    steps:
+      - name: Git Ref
+        id: ref
+        uses: myorg/gh-actions/git/get-ref@main
+        with:
+          commit_hash: ${{ github.event.inputs.commit_hash }}
+
+  changes:
+    needs: git_ref
+    runs-on: arc-runner-set
+    outputs:
+      infra: ${{ steps.changes.outputs.infra }}
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.git_ref.outputs.full }}
+
+      - name: Filter Changes
+        id: changes
+        uses: dorny/paths-filter@v2
+        with:
+          filters: |
+            infra:
+              - 'doorman/.cicd/terraform/**'
+
+  terraform_validate:
+    if: needs.changes.outputs.infra == 'true'
+    needs: ['changes', 'git_ref']
+    runs-on: arc-runner-set
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.git_ref.outputs.full }}
+
+      - name: Checkout Github Actions
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.MY_TOKEN }}
+          repository: myorg/gh-actions
+          path: .github/actions
+          persist-credentials: false
+
+      - name: Terraform Init
+        uses: ./.github/actions/terraform/init
+        with:
+          backend: false
+
+      - name: Terraform Validate
+        uses: ./.github/actions/terraform/validate
+
+  terraform_plan:
+    if: needs.changes.outputs.infra == 'true'
+    needs: ['changes', 'git_ref', 'terraform_validate']
+    runs-on: arc-runner-set
+    environment: ${{ github.event.inputs.environment }}
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.git_ref.outputs.full }}
+
+      - name: Checkout Github Actions
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.MY_TOKEN }}
+          repository: myorg/gh-actions
+          path: .github/actions
+          persist-credentials: false
+
+      - name: Terraform Init
+        uses: ./.github/actions/terraform/init
+
+      - name: Terraform Plan
+        uses: ./.github/actions/terraform/plan
+
+      - name: Post Plan Summary
+        if: always()
+        uses: ./.github/actions/terraform/plan-summary
+
+      - name: Upload Plan Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ needs.git_ref.outputs.short }}
+          path: tfplan
+          retention-days: 30
+
+  approval_gate:
+    if: needs.changes.outputs.infra == 'true'
+    needs: ['changes', 'terraform_plan']
+    runs-on: arc-runner-set
+    environment: ${{ github.event.inputs.environment }}
+    steps:
+      - name: Awaiting Approval
+        run: |
+          echo "Plan reviewed. Awaiting approval to apply to ${{ github.event.inputs.environment }}."
+          echo "Approved by: ${{ github.actor }}"
+          echo "Commit: ${{ needs.git_ref.outputs.full }}"
+
+  terraform_apply:
+    if: needs.changes.outputs.infra == 'true'
+    needs: ['git_ref', 'changes', 'approval_gate']
+    runs-on: arc-runner-set
+    environment: ${{ github.event.inputs.environment }}
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.git_ref.outputs.full }}
+
+      - name: Checkout Github Actions
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.MY_TOKEN }}
+          repository: myorg/gh-actions
+          path: .github/actions
+          persist-credentials: false
+
+      - name: Terraform Init
+        uses: ./.github/actions/terraform/init
+
+      - name: Download Plan Artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-${{ needs.git_ref.outputs.short }}
+
+      - name: Terraform Apply
+        uses: ./.github/actions/terraform/apply
+
+      - name: Post Apply Summary
+        if: always()
+        uses: ./.github/actions/terraform/apply-summary

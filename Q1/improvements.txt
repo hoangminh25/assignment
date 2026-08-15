@@ -1,0 +1,14 @@
+
+Terraform improvements for the RDS resource:
+
+- The nested ternary for instance_class was hard to read and maintain. Replaced it with locals, easier to maintain now
+
+- The dynamic "parameter_group" block doesn't make sense since RDS can only associate to 1 parameter group
+
+- Pulls from Secrets Manager for username & password and uses password_wo so nothing sensitive ends up in state.
+
+- Took out create_before_destroy — that doesn't work for RDS because the identifier has to be unique. You can't create the new one before deleting the old.
+
+- Added deletion_protection. Also consolidated all the "is this live?" checks into one local.is_live flag so there's a single source of truth.
+
+- Moved all the environment-specific logic (backup retention, snapshots, etc.) into locals to keep the resource block clean.

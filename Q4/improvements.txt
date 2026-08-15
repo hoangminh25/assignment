@@ -1,0 +1,14 @@
+
+Moved Probe settings (initialDelaySeconds, timeoutSeconds) to livenessProbe and readinessProbe blocks.
+
+AMQP credentials were in a ConfigMap (plain text). Moved to AWS Secrets Manager with External Secrets Operator syncing them in.
+
+Added securityContext at pod and container level — runAsNonRoot, read-only filesystem, no privilege escalation.
+
+averageUtilization was 10% which could cause scaling issue, changed to 70%.
+
+Added PodDisruptionBudget so node drains don't kill all pods at once.
+
+Added topologySpreadConstraints to spread pods across nodes. Avoid single point of failure
+
+Added imagePullPolicy: Always so nodes don't use stale cached images.

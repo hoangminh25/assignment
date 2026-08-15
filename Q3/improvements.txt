@@ -1,0 +1,14 @@
+
+github Actions workflow fixes:
+
+The changes job runs path filtering but never exposes the output, so downstream jobs can't use it. Added the outputs block.
+
+terraform_plan and terraform_apply run every time regardless of whether infra changed. Added conditionals to skip them when there's nothing to do.
+
+terraform_apply runs its own fresh plan instead of using the one from the plan job. Now it downloads and uses the saved plan artifact.
+
+terraform_validate job before plan to catch syntax errors early
+
+approval_gate job between plan and apply, uses github environment protection rules so someone has to approve before changes hit prod
+
+Plan summary and apply summary steps — posts the output to the github actions summary so reviewers can see what's changing without manually searching through logs.

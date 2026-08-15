@@ -1,0 +1,23 @@
+
+RDS Major Version Upgrade using Blue/Green
+
+Before doing anything:
+- Check AWS docs for supported upgrade paths. Some engines don't let you skip versions (Postgres 11 has to go to 12 before 13).
+- Create the new parameter group ahead of time since major versions usually need a different family.
+- Run any pre-upgrade checks and fix deprecated stuff (syntax,libraries) in your app.
+- Do the full upgrade in nonprod first.
+- Communication to the stakeholders — Blue/Green drops connections during switchover.
+
+Game Day:
+
+- Take a manual snapshot before touching Terraform.
+
+- Create the new parameter group first as a separate apply, then create the Blue/Green deployment in another apply. AWS creates the green environment and sets up replication automatically. Blue keeps serving traffic the whole time.
+
+- Test green thoroughly — connect to it, run tests, check performance. This is the whole point of Blue/Green, you can validate everything before touching prod.
+
+- When ready, trigger the switchover via AWS CLI since Terraform can't do this part. AWS swaps DNS automatically so your app doesn't need config changes. Blue sticks around as a fallback if you need to roll back quickly.
+
+- Watch error rates and latency closely after switchover.
+
+Cleanup: update engine_version in tfvars to match the new version, remove the Blue/Green deployment resource from Terraform (this terminates the old blue instance), then apply. Once you're confident everything's good, remove the allow_major_version_upgrade flag to re-enable the safety guard.

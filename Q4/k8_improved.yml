@@ -1,0 +1,169 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ${APP_NAME}
+  labels:
+    app: ${APP_NAME}
+    tier: api
+    critical-path: fc
+spec:
+  selector:
+    matchLabels:
+      app: ${APP_NAME}
+      tier: api
+      critical-path: fc
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app: ${APP_NAME}
+        tier: api
+        critical-path: fc
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 2000
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+          labelSelector:
+            matchLabels:
+              app: ${APP_NAME}
+              tier: api
+      containers:
+      - name: ${APP_NAME}
+        image: ${APP_IMAGE}
+        imagePullPolicy: Always
+        envFrom:
+          - configMapRef:
+              name: ${APP_NAME}-env-variables
+          - secretRef:
+              name: ${APP_NAME}-credentials
+        resources:
+          limits:
+            cpu: "600m"
+            memory: "768Mi"
+          requests:
+            cpu: "300m"
+            memory: "384Mi"
+        ports:
+        - containerPort: 3000
+          name: api
+        livenessProbe:
+          httpGet:
+            path: /healthz
+            port: api
+          initialDelaySeconds: 15
+          timeoutSeconds: 2
+          periodSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /healthz
+            port: api
+          initialDelaySeconds: 15
+          timeoutSeconds: 2
+          periodSeconds: 5
+          failureThreshold: 3
+        securityContext:
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: true
+          capabilities:
+            drop:
+              - ALL
+---
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: ${APP_NAME}
+  labels:
+    app: ${APP_NAME}
+    tier: api
+    critical-path: fc
+spec:
+  scaleTargetRef:
+    apiVersion: apps/v1
+    kind: Deployment
+    name: ${APP_NAME}
+  minReplicas: ${STREAM_MIN_REPLICAS}
+  maxReplicas: 20
+  metrics:
+  - type: Resource
+    resource:
+      name: cpu
+      target:
+        type: Utilization
+        averageUtilization: 70
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: ${APP_NAME}
+  labels:
+    app: ${APP_NAME}
+    tier: api
+    critical-path: fc
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: ${APP_NAME}
+      tier: api
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ${APP_NAME}-env-variables
+  labels:
+    app: ${APP_NAME}
+data:
+  NODE_ENV: "${NODE_ENV}"
+  TZ: "Australia/Sydney"
+  AMQP_HOST: "amqpproxy"
+  AMQP_PORT: "5673"
+  AMQP_VHOST: "${AMQP_VHOST}"
+---
+apiVersion: external-secrets.io/v1beta1
+kind: ClusterSecretStore
+metadata:
+  name: aws-secrets-manager
+spec:
+  provider:
+    aws:
+      service: SecretsManager
+      region: ${AWS_REGION}
+      auth:
+        jwt:
+          serviceAccountRef:
+            name: external-secrets-sa
+            namespace: external-secrets
+---
+apiVersion: external-secrets.io/v1beta1
+kind: ExternalSecret
+metadata:
+  name: ${APP_NAME}-credentials
+  labels:
+    app: ${APP_NAME}
+spec:
+  refreshInterval: 1h
+  secretStoreRef:
+    name: aws-secrets-manager
+    kind: ClusterSecretStore
+  target:
+    name: ${APP_NAME}-credentials
+    creationPolicy: Owner
+  data:
+    - secretKey: AMQP_USER
+      remoteRef:
+        key: /${NODE_ENV}/${APP_NAME}/credentials
+        property: AMQP_USER
+    - secretKey: AMQP_PASSWORD
+      remoteRef:
+        key: /${NODE_ENV}/${APP_NAME}/credentials
+        property: AMQP_PASSWORD
